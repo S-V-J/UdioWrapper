@@ -214,7 +214,7 @@ class HCaptchaSolver:
 
     def get_token(self) -> Optional[str]:
         """Public method to get hCaptcha token."""
-        return self.get_token()
+        return self._fetch_captcha_token()
 
 
 def is_hcaptcha_blocked(response) -> bool:

@@ -198,3 +198,45 @@ If you'd like to contribute to this project, feel free to fork the repository an
 - Implement a user-friendly web interface for easier interaction with the API.
 
 -----
+
+## Added Features
+
+### hCaptcha Auto-Solver for 500 Server Error
+
+Fixed issue #7 where Udio's API returned HTTP 500 errors due to hCaptcha verification. The updated library now supports automatic hCaptcha solving through:
+
+1. **2captcha Integration**: Provide a 2captcha API key for automatic solving
+2. **Capsolver Integration**: Provide a Capsolver API key for automatic solving  
+3. **Manual Token Injection**: Provide a pre-solved hCaptcha token
+4. **Custom Callback**: Provide a custom function to solve captchas
+
+### Key Improvements
+
+- **Automatic Detection**: The library automatically detects hCaptcha-related 500 errors
+- **Retry Logic**: Implements exponential backoff with up to 3 retry attempts
+- **Token Management**: Caches tokens with 30-minute TTL and automatically refreshes
+- **Multiple Solving Options**: Support for multiple captcha solving services
+- **Graceful Degradation**: Works without API keys (returns clear error messages)
+- **Backward Compatibility**: Existing code continues to work unchanged
+
+### Usage Examples
+
+```python
+# Manual token injection (solve hCaptcha in browser first)
+wrapper = UdioWrapper(auth_token, hcaptcha_token="your_solved_token_here")
+
+# Automatic solving with 2captcha
+wrapper = UdioWrapper(auth_token, captcha_api_key="your_2captcha_key", captcha_service="2captcha")
+
+# Automatic solving with Capsolver
+wrapper = UdioWrapper(auth_token, captcha_api_key="your_capsolver_key", captcha_service="capsolver")
+
+# Custom solving logic
+def solve_hcaptcha():
+    # Your custom captcha solving logic here
+    return "solved_token_from_your_method"
+
+wrapper = UdioWrapper(auth_token, captcha_callback=solve_hcaptcha)
+```
+
+This implementation preserves all existing functionality while adding robust hCaptcha solving capabilities that maintain the original API.
