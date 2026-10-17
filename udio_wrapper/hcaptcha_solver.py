@@ -1,145 +1,231 @@
 """
-hCaptcha auto-solver for UdioWrapper.
-
-Solves issue #7 (500 Server Error - Auto Solve hcaptcha).
-
-Udio's /generate-proxy endpoint returns HTTP 500 when the backend cannot
-verify a valid hCaptcha token. The web frontend solves the invisible
-hCaptcha challenge (sitekey below) and sends the resulting token with the
-request. This module reproduces that step programmatically.
-
-It supports two popular solver services, configured via constructor args
-or environment variables:
-
-  * 2captcha  : CAPTCHA_API_KEY env var (or ``captcha_api_key`` arg)
-  * Capsolver : CAPSOLVER_API_KEY env var (or ``captcha_api_key`` arg)
-
-If no API key is configured the solver degrades gracefully: it logs a hint
-and returns None, so callers can still retry the request.
-
-The Udio hCaptcha sitekey is read from the live udio.com frontend bundle.
+hcaptcha_solver.py - Udio Wrapper hCaptcha solution
+Automatically solve hCaptcha challenges for Udio's /generate-proxy endpoint
 """
-import os
-import re
+import logging
 import time
 import requests
+from typing import Optional
 
-# Invisible hCaptcha sitekey used by https://www.udio.com (verified against
-# the deployed JS bundle: /_next/static/chunks/*).
-UDIO_HCAPTCHA_SITEKEY = "2945592b-1928-43a9-8473-7e7fed3d752e"
-UDIO_SITE_URL = "https://www.udio.com"
+# Basic logger setup
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
+    logger.setLevel(logging.INFO)
 
 
 class HCaptchaSolver:
-    """Solve an invisible hCaptcha challenge via 2captcha or Capsolver."""
+    """Handles hCaptcha token acquisition for Udio API requests."""
 
-    def __init__(self, sitekey=None, site_url=None, api_key=None, service=None):
-        self.sitekey = sitekey or UDIO_HCAPTCHA_SITEKEY
-        self.site_url = site_url or UDIO_SITE_URL
-        # Resolve API key and preferred service.
-        self.api_key = api_key or os.getenv("CAPTCHA_API_KEY") or os.getenv("CAPSOLVER_API_KEY")
-        self.service = service or (
-            "2captcha" if os.getenv("CAPTCHA_API_KEY") else "capsolver"
-        )
-        self._cache = None
+    # Sitekey for Udio's hCaptcha (found in Udio's frontend JS)
+    HCAPTCHA_SITEKEY = "2945592b-1928-43a9-8473-7e7fed3d752e"
+    PAGE_URL = "https://www.udio.com"
+
+    def __init__(self, api_key: str = None, service: str = None):
+        """
+        Initialize captcha solver.
+
+        :param api_key: API key for 2captcha or Capsolver service
+        :param service: "2captcha" or "capsolver"
+        """
+        self.api_key = api_key
+        self.service = service.lower() if service else None
+        self._cached_token = None
+        self._cached_expiry = 0
+
+    def get_token(self) -> Optional[str]:
+        """Get a cached hCaptcha token if available, otherwise fetch a new one."""
+        current_time = time.time()
+
+        # Return cached token if still valid (30 minute TTL)
+        if self._cached_token and current_time < self._cached_expiry - 900:
+            logger.debug("Returning cached hCaptcha token")
+            return self._cached_token
+
+        # Fetch fresh token
+        token = self._fetch_captcha_token()
+        if token:
+            self._cached_token = token
+            self._cached_expiry = current_time + 1800  # 30 minutes
+            logger.info("Fetched new hCaptcha token")
+            return token
+        else:
+            logger.warning("Could not obtain hCaptcha token")
+            return None
 
     def clear_cache(self):
-        self._cache = None
+        """Clear cached token to force refresh on next request."""
+        self._cached_token = None
+        self._cached_expiry = 0
+        logger.debug("hCaptcha token cache cleared")
 
-    def get_token(self, force=False):
-        """Return a fresh hCaptcha token, or None if unavailable."""
-        if self._cache and not force:
-            return self._cache
+    def _fetch_captcha_token(self) -> Optional[str]:
+        """Fetch a fresh hCaptcha token from the configured service."""
+        if self.service == "2captcha":
+            return self._fetch_from_2captcha()
+        elif self.service == "capsolver":
+            return self._fetch_from_capsolver()
+        else:
+            logger.error(f"Unsupported hCaptcha service: {self.service}")
+            return None
+
+    def _fetch_from_2captcha(self) -> Optional[str]:
+        """Fetch hCaptcha token using 2captcha API."""
+        logger.info("Attempting to solve hCaptcha via 2captcha")
         if not self.api_key:
-            print(
-                "hCaptcha: no API key set. Set CAPTCHA_API_KEY (2captcha) or "
-                "CAPSOLVER_API_KEY to enable auto-solving."
-            )
+            logger.error("2captcha API key not provided")
             return None
-        token = None
+
         try:
-            if self.service == "2captcha":
-                token = self._solve_2captcha()
-            else:
-                token = self._solve_capsolver()
-        except Exception as exc:  # never let a solver failure kill the request
-            print(f"hCaptcha: solver error: {exc}")
-            return None
-        if token:
-            self._cache = token
-        return token
+            # Step 1: Submit the captcha to 2captcha
+            submit_url = "http://2captcha.com/in.php"
+            submit_data = {
+                'key': self.api_key,
+                'method': 'hcaptcha',
+                'sitekey': self.HCAPTCHA_SITEKEY,
+                'pageurl': self.PAGE_URL,
+                'json': 1
+            }
 
-    def _solve_2captcha(self):
-        # Submit the challenge.
-        resp = requests.post(
-            "https://2captcha.com/in.php",
-            data={
-                "key": self.api_key,
-                "method": "hcaptcha",
-                "sitekey": self.sitekey,
-                "pageurl": self.site_url,
-            },
-            timeout=30,
-        )
-        text = resp.text.strip()
-        if not text.startswith("OK|"):
-            print(f"hCaptcha: 2captcha submit failed: {text}")
-            return None
-        task_id = text.split("|", 1)[1]
-        # Poll for the result.
-        for _ in range(30):
-            time.sleep(3)
-            res = requests.get(
-                "https://2captcha.com/res.php",
-                params={"key": self.api_key, "action": "get", "id": task_id},
-                timeout=30,
-            ).text.strip()
-            if res.startswith("OK|"):
-                return res.split("|", 1)[1]
-            if res == "CAPCHA_NOT_READY":
-                continue
-            if res.startswith("ERROR"):
-                print(f"hCaptcha: 2captcha error: {res}")
+            logger.debug(f"Submitting hCaptcha to 2captcha: {submit_data}")
+            response = requests.post(submit_url, data=submit_data, timeout=30)
+            result = response.json()
+
+            if result.get('status') != 1:
+                logger.error(f"Failed to submit hCaptcha to 2captcha: {result}")
                 return None
-        return None
 
-    def _solve_capsolver(self):
-        payload = {
-            "clientKey": self.api_key,
-            "task": {
-                "type": "HCaptchaTaskProxyLess",
-                "websiteURL": self.site_url,
-                "websiteKey": self.sitekey,
-            },
-        }
-        resp = requests.post("https://api.capsolver.com/createTask", json=payload, timeout=30)
-        task_id = resp.json().get("taskId")
-        if not task_id:
-            print(f"hCaptcha: capsolver createTask failed: {resp.text[:200]}")
+            captcha_id = result.get('request')
+            logger.info(f"Submitted hCaptcha to 2captcha, ID: {captcha_id}")
+
+            # Step 2: Poll for the solution
+            result_url = "http://2captcha.com/res.php"
+            start_time = time.time()
+            max_wait = 120  # 2 minutes timeout
+
+            while time.time() - start_time < max_wait:
+                time.sleep(5)  # Wait 5 seconds between polls
+
+                poll_data = {
+                    'key': self.api_key,
+                    'action': 'get',
+                    'id': captcha_id,
+                    'json': 1
+                }
+
+                logger.debug(f"Polling 2captcha for result: {poll_data}")
+                response = requests.post(result_url, data=poll_data, timeout=30)
+                result = response.json()
+
+                if result.get('status') == 1:
+                    token = result.get('request')
+                    logger.info(f"Successfully solved hCaptcha via 2captcha")
+                    return token
+                elif result.get('request') != 'CAPCHA_NOT_READY':
+                    logger.error(f"Error polling 2captcha: {result}")
+                    return None
+
+            logger.error("Timed out waiting for 2captcha solution")
             return None
-        for _ in range(30):
-            time.sleep(3)
-            status = requests.post(
-                "https://api.capsolver.com/getTaskResult",
-                json={"clientKey": self.api_key, "taskId": task_id},
-                timeout=30,
-            ).json()
-            if status.get("status") == "ready":
-                return status.get("solution", {}).get("gRecaptchaResponse")
-            if status.get("status") == "failed":
-                print(f"hCaptcha: capsolver failed: {status}")
+
+        except Exception as e:
+            logger.error(f"Exception while solving hCaptcha via 2captcha: {e}")
+            return None
+
+    def _fetch_from_capsolver(self) -> Optional[str]:
+        """Fetch hCaptcha token using Capsolver API."""
+        logger.info("Attempting to solve hCaptcha via Capsolver")
+        if not self.api_key:
+            logger.error("Capsolver API key not provided")
+            return None
+
+        try:
+            # Step 1: Submit the captcha to Capsolver
+            submit_url = "https://api.capsolver.com/createTask"
+            submit_data = {
+                "clientKey": self.api_key,
+                "task": {
+                    "type": "HCaptchaTaskProxyLess",
+                    "websiteURL": self.PAGE_URL,
+                    "websiteKey": self.HCAPTCHA_SITEKEY,
+                }
+            }
+
+            logger.debug(f"Submitting hCaptcha to Capsolver: {submit_data}")
+            response = requests.post(submit_url, json=submit_data, timeout=30)
+            result = response.json()
+
+            if result.get('errorId') != 0:
+                logger.error(f"Failed to submit hCaptcha to Capsolver: {result}")
                 return None
-        return None
+
+            task_id = result.get('taskId')
+            logger.info(f"Submitted hCaptcha to Capsolver, Task ID: {task_id}")
+
+            # Step 2: Poll for the solution
+            result_url = "https://api.capsolver.com/getTaskResult"
+            start_time = time.time()
+            max_wait = 120  # 2 minutes timeout
+
+            while time.time() - start_time < max_wait:
+                time.sleep(5)  # Wait 5 seconds between polls
+
+                poll_data = {
+                    "clientKey": self.api_key,
+                    "taskId": task_id
+                }
+
+                logger.debug(f"Polling Capsolver for result: {poll_data}")
+                response = requests.post(result_url, json=poll_data, timeout=30)
+                result = response.json()
+
+                if result.get('status') == "ready":
+                    token = result.get('solution', {}).get('gRecaptchaResponse')
+                    if token:
+                        logger.info(f"Successfully solved hCaptcha via Capsolver")
+                        return token
+                    else:
+                        logger.error(f"Capsolver returned ready but no token: {result}")
+                        return None
+                elif result.get('status') == "processing":
+                    continue  # Still processing
+                else:
+                    logger.error(f"Error polling Capsolver: {result}")
+                    return None
+
+            logger.error("Timed out waiting for Capsolver solution")
+            return None
+
+        except Exception as e:
+            logger.error(f"Exception while solving hCaptcha via Capsolver: {e}")
+            return None
+
+    def is_hcaptcha_required(self, response) -> bool:
+        """Determine if a 500 response is likely hCaptcha related."""
+        # Basic heuristic: check for common indicators
+        indicators = [
+            response.status_code == 500,
+            "captcha" in (response.text or "").lower(),
+            "hcaptcha" in (response.text or "").lower(),
+            "challenge" in (response.text or "").lower(),
+            "blocked" in (response.text or "").lower()
+        ]
+        return any(indicators)
+
+    def get_token(self) -> Optional[str]:
+        """Public method to get hCaptcha token."""
+        return self.get_token()
 
 
-def is_hcaptcha_blocked(response):
-    """Heuristic: does this response indicate a missing/invalid captcha?"""
-    if response is None:
+def is_hcaptcha_blocked(response) -> bool:
+    """Quick check if response contains hCaptcha indicators."""
+    if not hasattr(response, 'text') or response.text is None:
         return False
-    if response.status_code in (403, 500, 503):
-        return True
-    try:
-        body = response.text.lower()
-    except Exception:
-        return False
-    return any(k in body for k in ("captcha", "challenge", "bot"))
+
+    text = response.text.lower()
+    return any(indicator in text for indicator in ["captcha", "hcaptcha", "challenge", "blocked"])
+
+
+class CaptchaRequiredError(Exception):
+    """Exception raised when hCaptcha is required for a request."""
+    pass
