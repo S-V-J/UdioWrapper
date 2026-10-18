@@ -212,17 +212,13 @@ class HCaptchaSolver:
         ]
         return any(indicators)
 
-    def get_token(self) -> Optional[str]:
-        """Public method to get hCaptcha token."""
-        return self._fetch_captcha_token()
-
 
 def is_hcaptcha_blocked(response) -> bool:
     """Quick check if response contains hCaptcha indicators."""
     if not hasattr(response, 'text') or response.text is None:
         return False
 
-    text = response.text.lower()
+    text = str(response.text).lower()
     return any(indicator in text for indicator in ["captcha", "hcaptcha", "challenge", "blocked"])
 
 
