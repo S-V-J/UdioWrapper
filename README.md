@@ -50,18 +50,23 @@ pip install git+https://github.com/flowese/UdioWrapper.git
 
 ## Configuration
 
-### ⚠️ Important: Udio API Status
+### ⚠️ Important: Udio API & Authentication Status
 
 **Udio does not currently offer a public API.** The following endpoints are **invalid/unavailable**:
 - `https://www.udio.com/api/generate-proxy` — Not accessible publicly
 - `https://www.udio.com/api/` — No public API available
 - Udio website does not provide an option to create API keys
 
-This wrapper uses **session-based authentication** via the `sb-api-auth-token` cookie from your browser session. The documentation below reflects the current workaround method.
+### ⚠️ Critical: Cookie-based Authentication No Longer Working
 
-### Obtaining the Authorization Token (Cookie-based)
+**The session-based authentication method using `sb-api-auth-token` cookie is no longer functioning.** As of the latest updates, Udio has changed their authentication mechanism and the cookie extraction method described below **does not work anymore**.
 
-Since there is no public API key generation, you must extract the session cookie from your logged-in browser:
+The wrapper was designed to use **session-based authentication** via the `sb-api-auth-token` cookie from your browser session, but this method is currently broken due to changes on Udio's end.
+
+#### Previously Documented Method (No Longer Functional)
+
+<details>
+<summary>Historical reference - this method no longer works</summary>
 
 1. Sign up at [Udio](https://www.udio.com/).
 2. Once registered and logged in, open your browser's dev tools:
@@ -73,11 +78,18 @@ Since there is no public API key generation, you must extract the session cookie
 
 ![Udio Wrapper](screen_cookies.jpeg)
 
-### Usage
+</details>
 
-To use `udio_wrapper`, import the `UdioWrapper` class and provide the `sb-api-auth-token` cookie value as the `auth_token` parameter.
+### Current Status
 
-**Note**: The token is tied to your browser session and may expire. If you receive 401/403 errors, re-extract the cookie.
+- **Public API**: Not available
+- **API Key Generation**: Not available on Udio website  
+- **Cookie-based Auth (`sb-api-auth-token`)**: No longer working
+- **hCaptcha**: Required on `/generate-proxy` endpoint (returns 500 without valid token)
+
+This wrapper includes an **hCaptcha auto-solver** (using 2captcha or Capsolver) to handle the 500 Server Error, but **cannot function without a valid authentication method**.
+
+**If you discover a working authentication method, please contribute by opening a PR!**
 
 ## Usage Examples
 
