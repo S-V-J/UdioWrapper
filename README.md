@@ -50,21 +50,34 @@ pip install git+https://github.com/flowese/UdioWrapper.git
 
 ## Configuration
 
-### Obtaining the Authorization Token
+### ⚠️ Important: Udio API Status
+
+**Udio does not currently offer a public API.** The following endpoints are **invalid/unavailable**:
+- `https://www.udio.com/api/generate-proxy` — Not accessible publicly
+- `https://www.udio.com/api/` — No public API available
+- Udio website does not provide an option to create API keys
+
+This wrapper uses **session-based authentication** via the `sb-api-auth-token` cookie from your browser session. The documentation below reflects the current workaround method.
+
+### Obtaining the Authorization Token (Cookie-based)
+
+Since there is no public API key generation, you must extract the session cookie from your logged-in browser:
 
 1. Sign up at [Udio](https://www.udio.com/).
-2. Once registered, open your browser's inspector:
-   - In Chrome: `Ctrl+Shift+I` or `F12` on Windows, `Cmd+Option+I` on Mac.
-3. Go to the `Application` tab.
-4. On the left panel, locate and click on `Cookies`, then select the Ideogram website.
-5. Find the cookie named `sb-api-auth-token`.
-6. Click on `sb-api-auth-token` and copy the value in the `Value` field.
+2. Once registered and logged in, open your browser's dev tools:
+   - Chrome/Edge: `Ctrl+Shift+I` or `F12` (Windows), `Cmd+Option+I` (Mac)
+   - Firefox: `Ctrl+Shift+I` or `F12`
+3. Go to the **Application** tab.
+4. On the left panel, expand **Cookies** → click on `https://www.udio.com`
+5. Find the cookie named **`sb-api-auth-token`** and copy its **Value**.
 
 ![Udio Wrapper](screen_cookies.jpeg)
 
 ### Usage
 
-To use `udio_wrapper`, import the `UdioWrapper` class and provide the necessary parameters.
+To use `udio_wrapper`, import the `UdioWrapper` class and provide the `sb-api-auth-token` cookie value as the `auth_token` parameter.
+
+**Note**: The token is tied to your browser session and may expire. If you receive 401/403 errors, re-extract the cookie.
 
 ## Usage Examples
 
